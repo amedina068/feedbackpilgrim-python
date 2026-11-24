@@ -48,14 +48,15 @@ class APIConnectionError(FeedbackPilgrimError):
     TLS error. The original exception is in ``__cause__``.
 
     Attributes:
-        request_sent: ``False`` when the instance did not receive the request.
-            Then a second attempt is safe for every method.
+        before_send: ``True`` for a DNS failure, a refused connection or a
+            connect timeout. Then the instance did not get the request, and the
+            client retries it for every method.
     """
 
-    def __init__(self, message: str, *, request_sent: bool) -> None:
+    def __init__(self, message: str, *, before_send: bool = False) -> None:
         super().__init__(message)
         self.message = message
-        self.request_sent = request_sent
+        self.before_send = before_send
 
 
 class APITimeoutError(APIConnectionError):
@@ -165,11 +166,14 @@ class WebhookVerificationError(FeedbackPilgrimError):
     """A webhook delivery did not pass the verification.
 
     Attributes:
-        reason: ``"signature"`` when the signature is missing or wrong.
-            ``"timestamp"`` when the timestamp is missing or outside the tolerance.
+        reason: ``"timestamp"`` when the timestamp is missing, is not digits,
+            or is outside the tolerance. ``"signature"`` when the signature is
+            missing or wrong. ``"payload"`` when the body is not a JSON object.
     """
 
-    def __init__(self, message: str, *, reason: Literal["signature", "timestamp"]) -> None:
+    def __init__(
+        self, message: str, *, reason: Literal["signature", "timestamp", "payload"]
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.reason = reason

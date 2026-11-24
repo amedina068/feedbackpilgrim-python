@@ -377,19 +377,13 @@ def test_sign_in_url_known_fields_win_over_custom_fields(
     assert transport.json() == {"contact": {"email": "jane@example.com"}}
 
 
-def test_sign_in_url_raises_when_the_instance_sends_an_empty_array(
+def test_sign_in_url_returns_none_when_the_instance_sends_an_empty_array(
     client: FeedbackPilgrim, transport: FakeTransport
 ) -> None:
     # The app sends [] when the request has no contact email.
     transport.reply(200, [])
-    with pytest.raises(FeedbackPilgrimError, match="no sign-in link"):
-        client.sign_in_url("jane@example.com")
-
-
-def test_sign_in_url_needs_an_email(client: FeedbackPilgrim, transport: FakeTransport) -> None:
-    with pytest.raises(ValueError, match="email"):
-        client.sign_in_url("  ")
-    assert transport.requests == []
+    assert client.sign_in_url("") is None
+    assert transport.json() == {"contact": {"email": ""}}
 
 
 # --- Arguments ----------------------------------------------------------------

@@ -38,7 +38,7 @@ from feedbackpilgrim.models import (
     Testimonial,
     Vote,
 )
-from feedbackpilgrim.webhooks import WebhookEvent, WebhookPost, construct_event, verify_signature
+from feedbackpilgrim.webhooks import WebhookEvent, WebhookPost, verify_signature, verify_webhook
 
 __all__ = [
     "APIConnectionError",
@@ -70,7 +70,7 @@ __all__ = [
     "WebhookPost",
     "WebhookVerificationError",
     "__version__",
-    "construct_event",
     "identity_hash",
     "verify_signature",
+    "verify_webhook",
 ]

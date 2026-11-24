@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import socket
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
@@ -53,8 +54,9 @@ class Transport(Protocol):
     """Sends one request and returns the response for every status code.
 
     A transport raises :class:`~feedbackpilgrim.APIConnectionError` when it gets
-    no response. It sets ``request_sent=False`` only when the instance did not
-    receive the request.
+    no response, and :class:`~feedbackpilgrim.APITimeoutError` after a timeout.
+    It sets ``before_send=True`` only for a DNS failure, a refused connection or
+    a connect timeout.
     """
 
     def __call__(self, request: Request, timeout: float | None) -> Response: ...
@@ -87,20 +89,22 @@ class UrllibTransport:
             with error:
                 return Response(error.code, _lower(error.headers), error.read())
         except urllib.error.URLError as error:
-            # urllib raises URLError while it connects and sends the request.
-            # The instance did not receive a complete request.
-            if isinstance(error.reason, TimeoutError):
+            # urllib raises URLError while it connects and sends the request,
+            # before it reads the response.
+            reason = error.reason
+            if isinstance(reason, TimeoutError):
                 raise APITimeoutError(
-                    f"The connection timed out: {error.reason}", request_sent=False
+                    f"The connection timed out: {reason}", before_send=True
                 ) from error
             raise APIConnectionError(
-                f"The connection to the instance failed: {error.reason}", request_sent=False
+                f"The connection to the instance failed: {reason}",
+                before_send=isinstance(reason, (socket.gaierror, ConnectionRefusedError)),
             ) from error
         except TimeoutError as error:
-            raise APITimeoutError(f"The response timed out: {error}", request_sent=True) from error
+            raise APITimeoutError(f"The response timed out: {error}") from error
         except (OSError, http.client.HTTPException) as error:
             raise APIConnectionError(
-                f"The connection closed before the response: {error}", request_sent=True
+                f"The connection closed before the response: {error}"
             ) from error
 
 

@@ -26,16 +26,19 @@ for post in client.posts.iter(status="pending"):
 - [Retries](#retries)
 - [Django and FastAPI](#django-and-fastapi)
 - [Supported Python versions](#supported-python-versions)
+- [License](#license)
 
 ## Install
 
-The package is not on PyPI yet. Install it from the repository:
+The package is not on PyPI. Install it from the GitHub repository:
 
 ```bash
 pip install "git+https://github.com/amedina068/feedbackpilgrim-python.git"
 # or
 uv add "git+https://github.com/amedina068/feedbackpilgrim-python.git"
 ```
+
+The repository is private, so you need read access and git credentials for GitHub.
 
 The package has no dependencies. It uses only the Python standard library.
 
@@ -93,7 +96,7 @@ A token belongs to one client of the instance. Each request reads and changes on
 A transport is a callable that takes a `Request` and a timeout, and returns a `Response`. Give your own transport to use a proxy, custom TLS settings or another HTTP library:
 
 ```python
-from feedbackpilgrim import APIConnectionError, FeedbackPilgrim, Request, Response
+from feedbackpilgrim import APIConnectionError, APITimeoutError, FeedbackPilgrim, Request, Response
 import httpx
 
 http = httpx.Client(proxy="http://proxy.internal:3128")
@@ -108,10 +111,14 @@ def send(request: Request, timeout: float | None) -> Response:
             content=request.body,
             timeout=timeout,
         )
+    except httpx.ConnectTimeout as error:
+        raise APITimeoutError(str(error), before_send=True) from error
+    except httpx.TimeoutException as error:
+        raise APITimeoutError(str(error)) from error
     except httpx.ConnectError as error:
-        raise APIConnectionError(str(error), request_sent=False) from error
+        raise APIConnectionError(str(error), before_send=True) from error
     except httpx.TransportError as error:
-        raise APIConnectionError(str(error), request_sent=True) from error
+        raise APIConnectionError(str(error)) from error
     return Response(
         reply.status_code, {k.lower(): v for k, v in reply.headers.items()}, reply.content
     )
@@ -120,7 +127,7 @@ def send(request: Request, timeout: float | None) -> Response:
 client = FeedbackPilgrim("https://feedback.example.com", token="1|...", transport=send)
 ```
 
-Set `request_sent=False` only when the instance did not receive the request. Then the client can retry a `POST` safely.
+Raise `APIConnectionError` when the transport gets no response, and `APITimeoutError` after a timeout. Set `before_send=True` only for a DNS failure, a refused connection or a connect timeout. Then the client retries every request. For another connection error, the client retries only an idempotent request.
 
 ## Resources
 
@@ -141,7 +148,7 @@ url = client.sign_in_url(
 
 `sign_in_url()` sends `POST /api/public/v1/init`. The instance creates the contact, or updates the contact with this email. The link is valid for 24 hours. Send the link only to that contact.
 
-For an existing contact, `custom_fields` replace all the custom fields. The widget init call (`POST /api/v1/init`) runs in the browser. This package does not send it. To sign in a user in the widget, make an [identity hash](#identity-hash).
+For an existing contact, `custom_fields` replace all the custom fields. If the instance sends no link, `sign_in_url()` returns `None`. For example, an empty email gets `[]` and no link. The widget init call (`POST /api/v1/init`) runs in the browser. This package does not send it. To sign in a user in the widget, make an [identity hash](#identity-hash).
 
 ### Posts
 
@@ -295,29 +302,36 @@ The instance sends a `POST` to your webhook URL for the events `post.created`, `
 | `X-FeedbackPilgrim-Signature-V2` | The HMAC-SHA256 hex digest of `<timestamp>.<raw body>`, with the signing secret of the webhook. |
 | `X-FeedbackPilgrim-Signature` | Deprecated. The digest of the body only. The package does not read it. |
 
-Verify the signature and get the event with `construct_event()`:
+Verify the signature and get the event with `verify_webhook()`:
 
 ```python
-from feedbackpilgrim import WebhookVerificationError, construct_event
+from feedbackpilgrim import WebhookVerificationError, verify_webhook
 
 try:
-    event = construct_event(raw_body, headers, WEBHOOK_SECRET)
+    event = verify_webhook(raw_body, headers, WEBHOOK_SECRET)
 except WebhookVerificationError as error:
-    ...  # send 400. error.reason is "signature" or "timestamp".
+    ...  # send 400. error.reason is "timestamp", "signature" or "payload".
 
-if already_processed(event.delivery_id):
+if event.delivery_id and already_processed(event.delivery_id):
     ...  # send 200 and do nothing
 if event.type == "post.completed":
-    notify_voters(event.post.id)
+    notify_voters(event.data.id)
 ```
 
 `event` is a `WebhookEvent`:
 
 - `event.type`: `post.created`, `post.status_changed` or `post.completed`.
-- `event.delivery_id`: the UUID of the delivery. Store it, and drop a delivery with an ID that you processed. The package does not store IDs.
-- `event.timestamp`: the Unix time of the attempt.
-- `event.post`: `id`, `title`, `content`, `status`, `board_id`, `contact_id` and `stage` (`id`, `name`, `type`, or `None`).
-- `event.raw`: the decoded body.
+- `event.data`: `id`, `title`, `content`, `status`, `board_id`, `contact_id` and `stage` (`id`, `name`, `type`, or `None`).
+- `event.payload`: the decoded body.
+- `event.timestamp`: the Unix time of the attempt, as an `int`.
+- `event.delivery_id`: the UUID of the delivery. Store it, and drop a delivery with an ID that you processed. The package does not store IDs. If the `X-FeedbackPilgrim-Delivery` header is missing, the verification passes and `delivery_id` is `None`. Older instances do not send this header.
+
+`verify_webhook()` does the checks in this order. The first check that fails gives `error.reason`:
+
+1. `"timestamp"`: the timestamp header is missing or has a character that is not an ASCII digit.
+2. `"signature"`: the signature header is missing or does not match the timestamp and the raw body.
+3. `"timestamp"`: the timestamp is outside the tolerance.
+4. `"payload"`: the body is not a JSON object.
 
 To get only a boolean, use `verify_signature()`:
 
@@ -335,7 +349,7 @@ valid = verify_signature(
 Rules:
 
 - Give the raw bytes of the body. Do not decode the JSON and encode it again. The app escapes `/` as `\/` and each character that is not ASCII as `\uXXXX`, so a new encoding gives other bytes.
-- The functions compare the digests in constant time.
+- The functions make the signature header lowercase, then compare the digests in constant time. An uppercase hex signature is valid.
 - The functions refuse a timestamp that is more than 300 seconds from the current time. Give `tolerance=` to change the limit.
 - The header names are not case-sensitive.
 
@@ -386,17 +400,20 @@ The client retries a failed request two times by default. The wait before each r
 |---|---|---|
 | 429 | Retry | Retry |
 | 5xx | Retry | No retry |
-| Connection not made (DNS error, refused connection) | Retry | Retry |
-| Read timeout or closed connection | Retry | No retry |
+| DNS failure, refused connection or connect timeout | Retry | Retry |
+| Read timeout, reset or other connection error | Retry | No retry |
 | Other 4xx | No retry | No retry |
 
-- If a response has a `Retry-After` header, the client waits for that time.
-- If `Retry-After` is more than 60 seconds, the client does not wait. It raises `RateLimitError` at once.
+- If a retried response has a `Retry-After` header (whole seconds or an HTTP date), the client waits for that time.
+- If `Retry-After` is more than 60 seconds, the client does not wait. It raises the error at once.
 - The API allows 120 requests each minute for each user. All the tokens of one user share this limit.
 - An update sets absolute values, so a second copy of a `PATCH` does no new action.
 - `contacts.upsert()` finds the contact by email, so a second copy is safe.
-- A second copy of `posts.create()` can make a second post. Thus the client does not retry it after a 5xx or a read timeout.
+- A second copy of `posts.create()` can make a second post. Thus the client does not retry it after a 5xx, a read timeout or a reset.
+- `sign_in_url()` makes a new link for each call, so the client does not retry it after a 5xx, a read timeout or a reset.
+- `APIConnectionError.before_send` is `True` for a DNS failure (`socket.gaierror`), a refused connection and a timeout while the request opens and sends. The instance did not get the request, so the client retries every request after these errors.
 - Set `max_retries=0` to stop all retries.
+- The JS, PHP and Ruby SDKs use the same retry rules.
 
 ## Django and FastAPI
 
@@ -456,22 +473,24 @@ from django.conf import settings
 from django.http import HttpRequest, HttpResponse, HttpResponseBadRequest
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
-from feedbackpilgrim import WebhookVerificationError, construct_event
+from feedbackpilgrim import WebhookVerificationError, verify_webhook
 
 
 @csrf_exempt
 @require_POST
 def feedbackpilgrim_webhook(request: HttpRequest) -> HttpResponse:
     try:
-        event = construct_event(
+        event = verify_webhook(
             request.body, request.headers, settings.FEEDBACKPILGRIM_WEBHOOK_SECRET
         )
     except WebhookVerificationError:
         return HttpResponseBadRequest()
 
-    _, first_time = ProcessedDelivery.objects.get_or_create(delivery_id=event.delivery_id)
+    first_time = True
+    if event.delivery_id:  # older instances send no delivery ID
+        _, first_time = ProcessedDelivery.objects.get_or_create(delivery_id=event.delivery_id)
     if first_time and event.type == "post.completed":
-        notify_voters(event.post.id)
+        notify_voters(event.data.id)
     return HttpResponse(status=204)
 ```
 
@@ -522,7 +541,7 @@ Receive webhooks in a route. Read the raw body with `await request.body()`:
 import os
 
 from fastapi import HTTPException, Request, Response
-from feedbackpilgrim import WebhookVerificationError, construct_event
+from feedbackpilgrim import WebhookVerificationError, verify_webhook
 
 WEBHOOK_SECRET = os.environ["FEEDBACKPILGRIM_WEBHOOK_SECRET"]
 
@@ -530,12 +549,13 @@ WEBHOOK_SECRET = os.environ["FEEDBACKPILGRIM_WEBHOOK_SECRET"]
 @app.post("/hooks/feedbackpilgrim", status_code=204)
 async def feedbackpilgrim_webhook(request: Request) -> Response:
     try:
-        event = construct_event(await request.body(), request.headers, WEBHOOK_SECRET)
+        event = verify_webhook(await request.body(), request.headers, WEBHOOK_SECRET)
     except WebhookVerificationError as error:
         raise HTTPException(status_code=400, detail=error.reason) from error
 
-    if await mark_processed(event.delivery_id) and event.type == "post.completed":
-        await notify_voters(event.post.id)
+    first_time = await mark_processed(event.delivery_id) if event.delivery_id else True
+    if first_time and event.type == "post.completed":
+        await notify_voters(event.data.id)
     return Response(status_code=204)
 ```
 
@@ -550,3 +570,7 @@ The package has full type hints and a `py.typed` file. `mypy --strict` passes on
 ## Development
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+MIT. Read [LICENSE](LICENSE). The Feedback Pilgrim app has its own license.

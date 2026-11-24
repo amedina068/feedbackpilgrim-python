@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from feedbackpilgrim import WebhookVerificationError, construct_event, verify_signature
+from feedbackpilgrim import WebhookVerificationError, verify_signature, verify_webhook
 from feedbackpilgrim.webhooks import DEFAULT_TOLERANCE, sign
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -19,6 +19,7 @@ VECTORS: dict[str, Any] = json.loads(
 LEGACY: dict[str, Any] = json.loads(
     (FIXTURES / "webhook-signature-vectors-legacy.json").read_text("utf-8")
 )
+SHARED: dict[str, Any] = json.loads((FIXTURES / "webhook-verify-vectors.json").read_text("utf-8"))
 SECRET: str = VECTORS["secret"]
 CASES: list[dict[str, Any]] = VECTORS["cases"]
 VALID = [case for case in CASES if case["valid"]]
@@ -61,49 +62,63 @@ def test_sign_matches_the_app(case: dict[str, Any]) -> None:
 
 
 @pytest.mark.parametrize("case", VALID, ids=[case["name"] for case in VALID])
-def test_construct_event_returns_the_event_and_the_delivery_id(case: dict[str, Any]) -> None:
-    event = construct_event(case["body"], headers_of(case), SECRET, now=now_of(case))
+def test_verify_webhook_returns_the_event_and_the_delivery_id(case: dict[str, Any]) -> None:
+    event = verify_webhook(case["body"], headers_of(case), SECRET, now=now_of(case))
     data = json.loads(case["body"])["data"]
     assert event.type == case["event"]
     assert event.delivery_id == DELIVERY_ID
     assert event.timestamp == int(case["timestamp"])
-    assert event.post.id == data["id"]
-    assert event.post.title == data["title"]
-    assert event.post.contact_id == data["contact_id"]
-    assert event.raw == json.loads(case["body"])
+    assert event.data.id == data["id"]
+    assert event.data.title == data["title"]
+    assert event.data.contact_id == data["contact_id"]
+    assert event.payload == json.loads(case["body"])
 
 
 @pytest.mark.parametrize("case", INVALID, ids=[case["name"] for case in INVALID])
-def test_construct_event_rejects_the_invalid_vector(case: dict[str, Any]) -> None:
+def test_verify_webhook_rejects_the_invalid_vector(case: dict[str, Any]) -> None:
     with pytest.raises(WebhookVerificationError) as caught:
-        construct_event(case["body"], headers_of(case), SECRET, now=now_of(case))
+        verify_webhook(case["body"], headers_of(case), SECRET, now=now_of(case))
     assert caught.value.reason == "signature"
+
+
+@pytest.mark.parametrize("case", SHARED["cases"], ids=[case["name"] for case in SHARED["cases"]])
+def test_verify_webhook_matches_the_shared_vector(case: dict[str, Any]) -> None:
+    expect = case["expect"]
+    if not expect["valid"]:
+        with pytest.raises(WebhookVerificationError) as caught:
+            verify_webhook(case["body"], case["headers"], SHARED["secret"], now=case["now"])
+        assert caught.value.reason == expect["reason"]
+        return
+    event = verify_webhook(case["body"], case["headers"], SHARED["secret"], now=case["now"])
+    assert event.type == expect["type"]
+    assert event.timestamp == expect["timestamp"]
+    assert event.delivery_id == expect["delivery_id"]
+    assert event.data.id == expect["data_id"]
+    assert event.payload == json.loads(case["body"])
 
 
 def test_the_stage_of_the_event() -> None:
     case = next(case for case in VALID if case["event"] == "post.completed")
-    event = construct_event(case["body"], headers_of(case), SECRET, now=now_of(case))
-    assert event.post.stage is not None
-    assert (event.post.stage.id, event.post.stage.name, event.post.stage.type) == (
+    event = verify_webhook(case["body"], headers_of(case), SECRET, now=now_of(case))
+    assert event.data.stage is not None
+    assert (event.data.stage.id, event.data.stage.name, event.data.stage.type) == (
         6,
         "Shipped",
         "complete",
     )
     created = VALID[0]
     assert (
-        construct_event(
-            created["body"], headers_of(created), SECRET, now=now_of(created)
-        ).post.stage
+        verify_webhook(created["body"], headers_of(created), SECRET, now=now_of(created)).data.stage
         is None
     )
 
 
 def test_a_body_encoded_again_does_not_match() -> None:
     case = next(case for case in VALID if "\\/" in case["body"])
-    event = construct_event(case["body"], headers_of(case), SECRET, now=now_of(case))
-    assert event.post.title == "Export to CSV/Excel"
-    assert event.post.content == "Café menus need it."
-    encoded_again = json.dumps(event.raw, ensure_ascii=False, separators=(",", ":"))
+    event = verify_webhook(case["body"], headers_of(case), SECRET, now=now_of(case))
+    assert event.data.title == "Export to CSV/Excel"
+    assert event.data.content == "Café menus need it."
+    encoded_again = json.dumps(event.payload, ensure_ascii=False, separators=(",", ":"))
     assert not verify_signature(
         encoded_again, case["signature"], case["timestamp"], SECRET, now=now_of(case)
     )
@@ -121,21 +136,21 @@ def test_the_legacy_signature_is_not_accepted() -> None:
 def test_header_names_are_not_case_sensitive() -> None:
     case = VALID[0]
     headers = {name.lower(): value for name, value in headers_of(case).items()}
-    event = construct_event(case["body"], headers, SECRET, now=now_of(case))
+    event = verify_webhook(case["body"], headers, SECRET, now=now_of(case))
     assert event.delivery_id == DELIVERY_ID
 
 
 def test_a_missing_delivery_header_gives_none() -> None:
     case = VALID[0]
     headers = {k: v for k, v in headers_of(case).items() if k != "X-FeedbackPilgrim-Delivery"}
-    assert construct_event(case["body"], headers, SECRET, now=now_of(case)).delivery_id is None
+    assert verify_webhook(case["body"], headers, SECRET, now=now_of(case)).delivery_id is None
 
 
 def test_a_missing_signature() -> None:
     case = VALID[0]
     headers = {k: v for k, v in headers_of(case).items() if "Signature" not in k}
     with pytest.raises(WebhookVerificationError) as caught:
-        construct_event(case["body"], headers, SECRET, now=now_of(case))
+        verify_webhook(case["body"], headers, SECRET, now=now_of(case))
     assert caught.value.reason == "signature"
     assert not verify_signature(case["body"], None, case["timestamp"], SECRET, now=now_of(case))
 
@@ -144,7 +159,7 @@ def test_a_missing_timestamp() -> None:
     case = VALID[0]
     headers = {k: v for k, v in headers_of(case).items() if "Timestamp" not in k}
     with pytest.raises(WebhookVerificationError) as caught:
-        construct_event(case["body"], headers, SECRET, now=now_of(case))
+        verify_webhook(case["body"], headers, SECRET, now=now_of(case))
     assert caught.value.reason == "timestamp"
     assert not verify_signature(case["body"], case["signature"], None, SECRET, now=now_of(case))
 
@@ -156,8 +171,21 @@ def test_a_timestamp_that_is_not_a_number() -> None:
         "X-FeedbackPilgrim-Signature-V2": sign("yesterday", body, SECRET),
     }
     with pytest.raises(WebhookVerificationError) as caught:
-        construct_event(body, headers, SECRET)
+        verify_webhook(body, headers, SECRET)
     assert caught.value.reason == "timestamp"
+
+
+def test_an_uppercase_signature_is_valid() -> None:
+    case = VALID[0]
+    signature = f" {case['signature'].upper()} "
+    assert verify_signature(case["body"], signature, case["timestamp"], SECRET, now=now_of(case))
+
+
+def test_a_timestamp_with_unicode_digits_is_rejected() -> None:
+    case = VALID[0]
+    timestamp = "\u0661" + case["timestamp"][1:]
+    signature = sign(timestamp, case["body"], SECRET)
+    assert not verify_signature(case["body"], signature, timestamp, SECRET, now=now_of(case))
 
 
 def test_a_signature_with_non_ascii_characters_is_rejected() -> None:
@@ -179,7 +207,7 @@ def test_the_tolerance_is_300_seconds_by_default_and_inclusive() -> None:
 def test_an_old_timestamp_raises_with_the_timestamp_reason() -> None:
     case = VALID[0]
     with pytest.raises(WebhookVerificationError) as caught:
-        construct_event(case["body"], headers_of(case), SECRET, now=now_of(case) + 301)
+        verify_webhook(case["body"], headers_of(case), SECRET, now=now_of(case) + 301)
     assert caught.value.reason == "timestamp"
 
 

@@ -31,9 +31,9 @@ __all__ = [
     "TIMESTAMP_HEADER",
     "WebhookEvent",
     "WebhookPost",
-    "construct_event",
     "sign",
     "verify_signature",
+    "verify_webhook",
 ]
 
 SIGNATURE_HEADER: Final = "X-FeedbackPilgrim-Signature-V2"
@@ -79,18 +79,19 @@ class WebhookEvent:
 
     Attributes:
         type: ``post.created``, ``post.status_changed`` or ``post.completed``.
-        delivery_id: The UUID of the delivery. Each retry of a delivery sends
-            the same UUID. Store it to drop a repeated delivery.
+        data: The post of the event.
+        payload: The decoded JSON body.
         timestamp: The Unix time of this attempt, in seconds.
-        post: The post of the event.
-        raw: The decoded JSON body.
+        delivery_id: The UUID of the delivery. Each retry of a delivery sends
+            the same UUID. Store it to drop a repeated delivery. ``None`` when
+            the header is missing: older instances do not send it.
     """
 
     type: str
-    delivery_id: str | None
+    data: WebhookPost
+    payload: Mapping[str, Any] = field(repr=False, compare=False)
     timestamp: int
-    post: WebhookPost
-    raw: Mapping[str, Any] = field(default_factory=dict, repr=False, compare=False)
+    delivery_id: str | None
 
 
 def verify_signature(
@@ -130,7 +131,7 @@ def verify_signature(
     return True
 
 
-def construct_event(
+def verify_webhook(
     payload: bytes | str,
     headers: Mapping[str, str],
     secret: str,
@@ -142,9 +143,9 @@ def construct_event(
 
     Example::
 
-        event = construct_event(request.body, request.headers, WEBHOOK_SECRET)
+        event = verify_webhook(request.body, request.headers, WEBHOOK_SECRET)
         if event.type == "post.completed":
-            notify_voters(event.post.id)
+            notify_voters(event.data.id)
 
     Args:
         payload: The raw request body, byte for byte.
@@ -154,9 +155,10 @@ def construct_event(
         now: The current Unix time. The default is ``time.time()``.
 
     Raises:
-        WebhookVerificationError: The signature is missing or wrong
-            (``reason="signature"``), or the timestamp is missing or outside the
-            tolerance (``reason="timestamp"``).
+        WebhookVerificationError: The timestamp is missing, is not digits or is
+            outside the tolerance (``reason="timestamp"``), the signature is
+            missing or wrong (``reason="signature"``), or the body is not a JSON
+            object (``reason="payload"``).
     """
     body = _bytes(payload)
     signed_at = _verify(
@@ -167,14 +169,19 @@ def construct_event(
         tolerance=tolerance,
         now=now,
     )
-    decoded = json.loads(body)
-    data = decoded.get("data") if isinstance(decoded, dict) else None
+    try:
+        decoded = json.loads(body)
+    except ValueError:
+        decoded = None
+    if not isinstance(decoded, dict):
+        raise WebhookVerificationError("The body is not a JSON object.", reason="payload")
+    data = decoded.get("data")
     return WebhookEvent(
-        type=str(decoded.get("event") if isinstance(decoded, dict) else ""),
-        delivery_id=_header(headers, DELIVERY_HEADER),
+        type=str(decoded.get("event") or ""),
+        data=WebhookPost.from_dict(data if isinstance(data, dict) else {}),
+        payload=decoded,
         timestamp=signed_at,
-        post=WebhookPost.from_dict(data if isinstance(data, dict) else {}),
-        raw=decoded if isinstance(decoded, dict) else {},
+        delivery_id=_header(headers, DELIVERY_HEADER),
     )
 
 
@@ -199,25 +206,24 @@ def _verify(
     """Return the timestamp as an int, or raise ``WebhookVerificationError``."""
     if not secret:
         raise ValueError("secret must not be empty")
-    if not timestamp:
+    timestamp = (timestamp or "").strip()
+    signature = (signature or "").strip().lower()
+    if not (timestamp.isascii() and timestamp.isdigit()):
         raise WebhookVerificationError(
-            f"The {TIMESTAMP_HEADER} header is missing.", reason="timestamp"
+            f"The {TIMESTAMP_HEADER} header is missing or is not a Unix time.", reason="timestamp"
         )
     if not signature:
         raise WebhookVerificationError(
             f"The {SIGNATURE_HEADER} header is missing.", reason="signature"
         )
 
+    # Check the signature before the clock, so that an unsigned request learns
+    # nothing about the clock.
     expected = sign(timestamp, payload, secret)
-    if not hmac.compare_digest(expected.encode("utf-8"), signature.strip().encode("utf-8")):
+    if not hmac.compare_digest(expected.encode("utf-8"), signature.encode("utf-8")):
         raise WebhookVerificationError("The signature does not match.", reason="signature")
 
-    try:
-        signed_at = int(timestamp)
-    except ValueError:
-        raise WebhookVerificationError(
-            f"The {TIMESTAMP_HEADER} header is not a Unix time.", reason="timestamp"
-        ) from None
+    signed_at = int(timestamp)
     current = time.time() if now is None else now
     if abs(current - signed_at) > tolerance:
         raise WebhookVerificationError(
@@ -232,14 +238,13 @@ def _bytes(payload: bytes | str) -> bytes:
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:
+    """Return the trimmed header value, or ``None`` when it is missing or empty."""
     value = headers.get(name)
-    if value is not None:
-        return value
-    wanted = name.lower()
-    for key, item in headers.items():
-        if key.lower() == wanted:
-            return item
-    return None
+    if value is None:
+        wanted = name.lower()
+        value = next((item for key, item in headers.items() if key.lower() == wanted), None)
+    value = (value or "").strip()
+    return value or None
 
 
 def _opt_str(value: Any) -> str | None:

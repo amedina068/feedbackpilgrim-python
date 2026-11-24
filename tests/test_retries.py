@@ -91,18 +91,62 @@ def test_a_429_without_retry_after_uses_the_backoff(
     assert 0.25 <= sleeps.delays[0] <= 0.5
 
 
-def test_a_connection_error_before_the_request_is_retried_for_post(
+def test_a_connection_error_after_the_send_is_not_retried_for_post(
     client: FeedbackPilgrim, transport: FakeTransport
 ) -> None:
-    transport.fail(APIConnectionError("refused", request_sent=False)).reply(201, POST)
-    client.posts.create("t", "c")
+    transport.fail(APIConnectionError("reset")).reply(201, POST)
+    with pytest.raises(APIConnectionError):
+        client.posts.create("t", "c")
+    assert len(transport.requests) == 1
+
+
+def test_a_connection_error_before_the_send_is_retried_for_post(
+    client: FeedbackPilgrim, transport: FakeTransport
+) -> None:
+    transport.fail(APIConnectionError("refused", before_send=True)).reply(201, POST)
+    assert client.posts.create("t", "c").id == 1
     assert len(transport.requests) == 2
+
+
+def test_a_connect_timeout_is_retried_for_sign_in_url(
+    client: FeedbackPilgrim, transport: FakeTransport
+) -> None:
+    transport.fail(APITimeoutError("connect timed out", before_send=True)).reply(
+        200, {"auth_url": "https://a.test/x"}
+    )
+    assert client.sign_in_url("jane@example.com") == "https://a.test/x"
+    assert len(transport.requests) == 2
+
+
+def test_a_connection_error_is_retried_for_get(
+    client: FeedbackPilgrim, transport: FakeTransport
+) -> None:
+    transport.fail(APIConnectionError("refused")).reply(200, POST)
+    assert client.posts.get(1).id == 1
+    assert len(transport.requests) == 2
+
+
+def test_sign_in_url_is_not_retried_after_a_5xx(
+    client: FeedbackPilgrim, transport: FakeTransport
+) -> None:
+    transport.reply(500, {"message": "Server Error"})
+    with pytest.raises(ServerError):
+        client.sign_in_url("jane@example.com")
+    assert len(transport.requests) == 1
+
+
+def test_a_5xx_with_retry_after_waits_that_time(
+    client: FeedbackPilgrim, transport: FakeTransport, sleeps: SleepRecorder
+) -> None:
+    transport.reply(503, {"message": "Down"}, headers={"Retry-After": "3"}).reply(200, POST)
+    client.posts.get(1)
+    assert sleeps.delays == [3.0]
 
 
 def test_a_timeout_after_the_request_is_not_retried_for_post(
     client: FeedbackPilgrim, transport: FakeTransport
 ) -> None:
-    transport.fail(APITimeoutError("read timed out", request_sent=True))
+    transport.fail(APITimeoutError("read timed out"))
     with pytest.raises(APITimeoutError):
         client.posts.create("t", "c")
     assert len(transport.requests) == 1
@@ -111,7 +155,7 @@ def test_a_timeout_after_the_request_is_not_retried_for_post(
 def test_a_timeout_after_the_request_is_retried_for_get(
     client: FeedbackPilgrim, transport: FakeTransport
 ) -> None:
-    transport.fail(APITimeoutError("read timed out", request_sent=True)).reply(200, POST)
+    transport.fail(APITimeoutError("read timed out")).reply(200, POST)
     assert client.posts.get(1).id == 1
     assert len(transport.requests) == 2
 
@@ -142,6 +186,7 @@ def test_backoff_grows_and_has_a_ceiling() -> None:
 def test_parse_retry_after() -> None:
     assert parse_retry_after(None) is None
     assert parse_retry_after(" 7 ") == 7.0
-    assert parse_retry_after("-3") == 0.0
+    assert parse_retry_after("-3") is None
+    assert parse_retry_after("1.5") is None
     assert parse_retry_after("Wed, 21 Oct 2015 07:28:00 GMT") == 0.0
     assert parse_retry_after("soon") is None

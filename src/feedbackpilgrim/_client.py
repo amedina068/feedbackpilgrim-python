@@ -129,22 +129,21 @@ class FeedbackPilgrim:
         ltv: float | None = None,
         avatar: str | None = None,
         custom_fields: Mapping[str, Any] | None = None,
-    ) -> str:
+    ) -> str | None:
         """Sign in a contact and return a sign-in link for the public site.
 
         The instance creates the contact, or updates the contact with this
         email. The link is valid for 24 hours. Send it only to that contact.
         ``custom_fields`` replace all the custom fields of an existing contact.
+
+        Return ``None`` when the instance sends no link, for example for an
+        empty email.
         """
-        if not email.strip():
-            raise ValueError("email must not be empty")
         known = encode(email=email, name=name, mrr=mrr, ltv=ltv, avatar=avatar)
         body = self._post("/init", {"contact": {**(custom_fields or {}), **known}})
         # Without a contact email, the instance sends [] and no link.
         auth_url = body.get("auth_url") if isinstance(body, dict) else None
-        if not isinstance(auth_url, str):
-            raise FeedbackPilgrimError("The instance sent no sign-in link for this contact.")
-        return auth_url
+        return auth_url if isinstance(auth_url, str) else None
 
     # --- Requests ------------------------------------------------------------
 
@@ -218,9 +217,7 @@ class FeedbackPilgrim:
     def _connection_retry_delay(
         self, error: APIConnectionError, idempotent: bool, attempt: int
     ) -> float | None:
-        if attempt >= self.max_retries:
-            return None
-        if error.request_sent and not idempotent:
+        if attempt >= self.max_retries or not (idempotent or error.before_send):
             return None
         return backoff(attempt)
 
@@ -231,19 +228,18 @@ class FeedbackPilgrim:
 
         The client retries a 429 for every method, because the rate limiter
         refuses the request before the app does the action. The client retries
-        a 5xx only for an idempotent request.
+        a 5xx only for an idempotent request. A ``Retry-After`` header replaces
+        the backoff.
         """
         if attempt >= self.max_retries:
             return None
         status = response.status_code
-        if status == 429:
-            retry_after = parse_retry_after(response.header("retry-after"))
-            if retry_after is None:
-                return backoff(attempt)
-            return retry_after if retry_after <= MAX_RETRY_AFTER else None
-        if status >= 500 and idempotent:
+        if status != 429 and not (status >= 500 and idempotent):
+            return None
+        retry_after = parse_retry_after(response.header("retry-after"))
+        if retry_after is None:
             return backoff(attempt)
-        return None
+        return retry_after if retry_after <= MAX_RETRY_AFTER else None
 
 
 def normalize_base_url(base_url: str) -> str:
@@ -280,14 +276,12 @@ def backoff(attempt: int) -> float:
 
 
 def parse_retry_after(value: str | None) -> float | None:
-    """Read a ``Retry-After`` header: a number of seconds or an HTTP date."""
+    """Read a ``Retry-After`` header: whole seconds or an HTTP date."""
     if value is None:
         return None
     value = value.strip()
-    try:
-        return max(0.0, float(value))
-    except ValueError:
-        pass
+    if value.isascii() and value.isdigit():
+        return float(value)
     try:
         moment = email.utils.parsedate_to_datetime(value)
     except (TypeError, ValueError):
