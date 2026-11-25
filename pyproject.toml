@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
-authors = [{ name = "Feedback Pilgrim" }]
+authors = [{ name = "Alejandro Medina" }]
 keywords = ["feedbackpilgrim", "feedback", "roadmap", "changelog", "webhooks", "api", "sdk"]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -23,6 +23,9 @@ classifiers = [
 dependencies = []
 
 [project.urls]
+Homepage = "https://github.com/amedina068/feedbackpilgrim-python"
+Documentation = "https://feedbackpilgrim.com/docs/sdks/overview"
+Issues = "https://github.com/amedina068/feedbackpilgrim-python/issues"
 Repository = "https://github.com/amedina068/feedbackpilgrim-python"
 Changelog = "https://github.com/amedina068/feedbackpilgrim-python/blob/main/CHANGELOG.md"
 

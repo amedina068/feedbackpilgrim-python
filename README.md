@@ -1,5 +1,8 @@
 # feedbackpilgrim
 
+[![CI](https://github.com/amedina068/feedbackpilgrim-python/actions/workflows/ci.yml/badge.svg)](https://github.com/amedina068/feedbackpilgrim-python/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 The Python client for the Feedback Pilgrim API. Feedback Pilgrim collects feedback, release notes and testimonials for one client (a project).
 
 Feedback Pilgrim is self-hosted. Each client of this package connects to one Feedback Pilgrim instance, so the URL of your instance is a required setting.
@@ -26,6 +29,8 @@ for post in client.posts.iter(status="pending"):
 - [Retries](#retries)
 - [Django and FastAPI](#django-and-fastapi)
 - [Supported Python versions](#supported-python-versions)
+- [Related projects](#related-projects)
+- [Community](#community)
 - [License](#license)
 
 ## Install
@@ -37,8 +42,6 @@ pip install "git+https://github.com/amedina068/feedbackpilgrim-python.git"
 # or
 uv add "git+https://github.com/amedina068/feedbackpilgrim-python.git"
 ```
-
-The repository is private, so you need read access and git credentials for GitHub.
 
 The package has no dependencies. It uses only the Python standard library.
 
@@ -567,10 +570,22 @@ The package supports Python 3.10, 3.11, 3.12, 3.13 and 3.14. CI runs the tests, 
 
 The package has full type hints and a `py.typed` file. `mypy --strict` passes on the package.
 
-## Development
+## Related projects
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md).
+- [Feedback Pilgrim](https://github.com/amedina068/feedbackpilgrim): the self-hosted app that this SDK calls. It uses the AGPL-3.0.
+- [Documentation](https://feedbackpilgrim.com/docs): the guides for the app and the SDKs. The source is in [feedbackpilgrim-docs](https://github.com/amedina068/feedbackpilgrim-docs).
+- [SDK overview](https://feedbackpilgrim.com/docs/sdks/overview): the install steps and the features of each SDK.
+- SDKs for other languages: [TypeScript](https://github.com/amedina068/feedbackpilgrim-js), [PHP](https://github.com/amedina068/feedbackpilgrim-php), [Ruby](https://github.com/amedina068/feedbackpilgrim-ruby).
+
+## Community
+
+- [CONTRIBUTING.md](CONTRIBUTING.md): how to set up the code and open a pull request.
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md): the rules for issues, pull requests, and reviews.
+- [SECURITY.md](SECURITY.md): how to report a security problem in private.
+- [CHANGELOG.md](CHANGELOG.md): the changes in each version.
+
+Report a problem with the SDK in the issues of this repository. Report a problem with the app in the [Feedback Pilgrim issues](https://github.com/amedina068/feedbackpilgrim/issues).
 
 ## License
 
-MIT. Read [LICENSE](LICENSE). The Feedback Pilgrim app has its own license.
+This SDK is available under the [MIT License](LICENSE). You can use it in closed source code. The Feedback Pilgrim app uses the AGPL-3.0. That license does not cover this SDK.
