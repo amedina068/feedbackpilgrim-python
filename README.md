@@ -5,12 +5,12 @@
 
 The Python client for the Feedback Pilgrim API. Feedback Pilgrim collects feedback, release notes and testimonials for one client (a project).
 
-Feedback Pilgrim is self-hosted. Each client of this package connects to one Feedback Pilgrim instance, so the URL of your instance is a required setting.
+Each client of this package connects to one Feedback Pilgrim instance, so the URL of the instance is a required setting. On Feedback Pilgrim Cloud, the URL is `https://app.feedbackpilgrim.com`. On a self-hosted instance, the URL is your `APP_URL`.
 
 ```python
 from feedbackpilgrim import FeedbackPilgrim
 
-client = FeedbackPilgrim("https://feedback.example.com", token="...")
+client = FeedbackPilgrim("https://app.feedbackpilgrim.com", token="...")
 
 for post in client.posts.iter(status="pending"):
     print(post.id, post.title)
@@ -47,14 +47,16 @@ The package has no dependencies. It uses only the Python standard library.
 
 ## Quick start
 
+No instance yet? Start a free 14-day trial of [Feedback Pilgrim Cloud](https://app.feedbackpilgrim.com/register). No credit card is necessary.
+
 1. Open your Feedback Pilgrim instance. Go to **Settings → API Tokens** and create a token.
 2. Keep the token on your server. The token gives full access to the data of one client.
-3. Make a client and read the posts:
+3. Make a client and read the posts. On Feedback Pilgrim Cloud, the URL is `https://app.feedbackpilgrim.com`:
 
    ```python
    from feedbackpilgrim import FeedbackPilgrim
 
-   client = FeedbackPilgrim("https://feedback.example.com", token="1|...")
+   client = FeedbackPilgrim("https://app.feedbackpilgrim.com", token="1|...")
 
    page = client.posts.list(status="pending", per_page=20)
    for post in page:
@@ -66,6 +68,12 @@ The package has no dependencies. It uses only the Python standard library.
    ```python
    post = client.posts.create("Add dark mode", "Please add a dark theme.", tags=[1])
    ```
+
+On a self-hosted instance, give the `APP_URL` of your instance:
+
+```python
+client = FeedbackPilgrim("https://feedback.example.com", token="1|...")
+```
 
 ## Configuration
 
@@ -82,7 +90,7 @@ client = FeedbackPilgrim(
 
 | Setting | Default | Description |
 |---|---|---|
-| `base_url` | `$FEEDBACKPILGRIM_URL` | The URL of your instance (the `APP_URL`). The client removes a trailing `/`, `/api` and `/api/public/v1`. |
+| `base_url` | `$FEEDBACKPILGRIM_URL` | The URL of your instance (the `APP_URL`). On Cloud, use `https://app.feedbackpilgrim.com`. The client removes a trailing `/`, `/api` and `/api/public/v1`. |
 | `token` | `$FEEDBACKPILGRIM_TOKEN` | An API token. The client sends it as `Authorization: Bearer <token>`. |
 | `timeout` | 30 seconds | The timeout of the connection and of each read. |
 | `max_retries` | 2 | The number of retries. Read [Retries](#retries). |
@@ -572,7 +580,7 @@ The package has full type hints and a `py.typed` file. `mypy --strict` passes on
 
 ## Related projects
 
-- [Feedback Pilgrim](https://github.com/amedina068/feedbackpilgrim): the self-hosted app that this SDK calls. It uses the AGPL-3.0.
+- [Feedback Pilgrim](https://github.com/amedina068/feedbackpilgrim): the app that this SDK calls. The self-hosted edition uses the AGPL-3.0. [Feedback Pilgrim Cloud](https://app.feedbackpilgrim.com) is the hosted edition.
 - [Documentation](https://feedbackpilgrim.com/docs): the guides for the app and the SDKs. The source is in [feedbackpilgrim-docs](https://github.com/amedina068/feedbackpilgrim-docs).
 - [SDK overview](https://feedbackpilgrim.com/docs/sdks/overview): the install steps and the features of each SDK.
 - SDKs for other languages: [TypeScript](https://github.com/amedina068/feedbackpilgrim-js), [PHP](https://github.com/amedina068/feedbackpilgrim-php), [Ruby](https://github.com/amedina068/feedbackpilgrim-ruby).
