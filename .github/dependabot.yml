@@ -1,0 +1,35 @@
+# Dependabot opens one pull request each week for each ecosystem.
+# The minor and patch updates of an ecosystem share one pull request.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      github-actions-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # The uv ecosystem updates pyproject.toml and uv.lock together.
+  # The pip ecosystem does not update uv.lock, and `uv sync --locked` fails.
+  - package-ecosystem: uv
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      uv-minor-and-patch:
+        update-types:
+          - minor
+          - patch
