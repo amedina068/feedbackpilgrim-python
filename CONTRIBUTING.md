@@ -49,7 +49,7 @@ The integration tests are read-only. They list posts and tags.
 
 ## Rules for code
 
-- Read the "Code style" section of [BRIEF.md](BRIEF.md).
+- Write code in the style of `requests`: a small, obvious API with good defaults, PEP 8, full type hints, and dataclasses for the responses.
 - Add a unit test with the fake transport of `tests/conftest.py` for each change of behavior.
 - Do not add a dependency if the standard library can do the job.
 - Do not add telemetry.
