@@ -13,3 +13,4 @@
 - [ ] I added an example to `README.md` for each new public method.
 - [ ] I added a line to `CHANGELOG.md` under `Unreleased`.
 - [ ] The change has no token, key or other secret.
+- [ ] The PR title follows Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:` and similar).
